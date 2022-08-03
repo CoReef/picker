@@ -12,10 +12,12 @@ def main():
     group = socket.inet_aton(multicast_group)
     mreq = struct.pack('4sL', group, socket.INADDR_ANY)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    loop_count = 0
     while True:
+        loop_count += 1
         print(f"Waiting for UDP multicast message <{multicast_group}> ...")
         rawdata, address = sock.recvfrom(1024)
-        print(f"\nReceived {len(rawdata)} bytes from {address}\n")
+        print(f"\nLoop {loop_count}: Received {len(rawdata)} bytes from {address}\n")
         print(f"Content is <{rawdata}>\n")
         data = json.loads(rawdata)
         print(f"as dict: <{data}>\n")
