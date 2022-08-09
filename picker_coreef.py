@@ -21,7 +21,8 @@ def main():
         print(f"Content is <{rawdata}>\n")
         data = json.loads(rawdata)
         print(f"as dict: <{data}>\n")
-        print(f"The current temperature is {data['temperature']} Celsius\n")
+        print(f"The current temperature is {data['current_t']} Celsius\n")
+        print(f"Temperature backlog is {data['backlog_t']}\n")
 
 if __name__ == '__main__':
     main()
