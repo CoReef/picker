@@ -6,12 +6,11 @@ import os
 import argparse
 
 from datetime import datetime
-from datetime import timezone
 
 multicast_group = '239.255.0.42'
 server_address = ('', 4242)
-backlog_size = 5
-write_frequency = 2
+backlog_size = 24
+write_frequency = 12
 
 devices = {}
 
@@ -42,7 +41,16 @@ def process_message (d,message):
     if message['sequence'] == d['last_seq']+1:
         d['last_seq'] += 1
         d['mcount'] += 1
-        timestamp = datetime.now().strftime('%Y-%m-%d %H\:%M\:%S')
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        reading = (message['sequence'],time.time(),timestamp,message['current_t'],message['current_h'])
+        d['readings'].append(reading)
+        d['not_written'] += 1
+        print(d)
+    elif message['sequence'] > d['last_seq']+1:
+        print(f'Did not receive sequence numbers {d["last_seq"]+1}..{message["sequence"]}. Trying to recover from backlog')
+        d['last_seq'] = message['sequence']
+        d['mcount'] += 1
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         reading = (message['sequence'],time.time(),timestamp,message['current_t'],message['current_h'])
         d['readings'].append(reading)
         d['not_written'] += 1
