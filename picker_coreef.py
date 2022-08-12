@@ -14,12 +14,12 @@ write_frequency = 12
 
 devices = {}
 
-def new_device (device_name,address,sequence,sec_since_boot,channel_list,readings):
+def new_device (device_name,address,sequence,poll,channel_list,readings):
     initial = {
         "name":device_name,
         "address":address,
         "last_seq":sequence,
-        "r_timebase":sec_since_boot,
+        "poll":poll,
         "l_timebase":time.time(),
         "last_seen":time.time(),
         "mcount":0,
@@ -39,20 +39,24 @@ def write_data_to_file(dir,d):
 def disect_message(message):
     device_name = message['device']
     sequence = message['sequence']
-    sec_since_boot = message['sec_since_boot']
+    poll = message['poll']
     channel_list = message['channels']
     n_channels = len(channel_list)
     n_samples = len(message['channel_0'])
     readings = []
+    ts = time.time()
     for s in range(n_samples):
+        if s > 0:
+            ts = ts - poll - message['p_delta_ms'][s-1]/1000.0
         values = []
         for c in range(n_channels):
             values.append(message[f'channel_{c}'][s])
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        reading = (sequence-s,time.time(),timestamp,values)
+        timestamp = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
+        reading = (sequence-s,ts,timestamp,values)
         if reading[0]>0:
             readings.append(reading)
-    return device_name,sequence,sec_since_boot,channel_list,readings
+    print(f'Deltas received: {message["p_delta_ms"]}')
+    return device_name,sequence,poll,channel_list,readings
 
 def merge_readings(device,new_readings):
     result = device['readings']
@@ -66,10 +70,10 @@ def merge_readings(device,new_readings):
     result.sort(key=lambda x: x[0],reverse=True)
     device['readings'] = result
 
-def process_message (d,address,message,data_dir):
-    device_name,sequence,sec_since_boot,channel_list,readings = disect_message(message)
+def process_message (d,address,message,data_dir,backlog_size):
+    device_name,sequence,poll,channel_list,readings = disect_message(message)
     if not device_name in devices:
-        devices[device_name] = new_device(device_name,address,sequence,sec_since_boot,channel_list,readings)
+        devices[device_name] = new_device(device_name,address,sequence,poll,channel_list,readings)
         print(f'New device <{device_name}> added.')
     device = devices[device_name]
     device['last_seen']=time.time()
@@ -96,6 +100,7 @@ def process_message (d,address,message,data_dir):
         write_data_to_file(data_dir,device)
         device['not_written'] = 0
 
+    print(f'{len(device["readings"])} readings for device {device["name"]}. Backlog size is {backlog_size}.')
     if len(device['readings']) > backlog_size:
         device['readings'] = device['readings'][:backlog_size-len(device['readings'])]
  
@@ -128,7 +133,7 @@ def main():
     while True:
         rawdata, address = sock.recvfrom(1024)
         json_message = json.loads(rawdata)
-        process_message(devices,address,json_message,data_dir)
+        process_message(devices,address,json_message,data_dir,backlog_size)
 
 if __name__ == '__main__':
     main()
