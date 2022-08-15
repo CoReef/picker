@@ -42,7 +42,11 @@ class Message:
 
     def __repr__(self):
         class_name = type(self).__name__
-        return f'{class_name}(device_name={self.device_name!r},readings={self.readings!r},deltas={self.deltas!r})'
+        return (
+            f'{class_name}({self.device_name!r},'
+            f'readings=[{self.readings[0]!r}...{self.readings[-1]!r}],'
+            f'deltas=[{self.deltas[0]!r}...{self.deltas[-1]!r}])'
+        )
 
 # --------------------------------------------------------------------------------
 # Class Device
@@ -71,6 +75,15 @@ class Device:
         self.not_written = min(message.sequence,len(message.readings))
         self.message_count = 0
         self.last_seen = time.time()
+
+    def __repr__(self):
+        class_name = type(self).__name__
+        # {k: v for k, v in a.__class__.__dict__.items() if not k.startswith('__')}?
+        return (
+            f'{class_name}({self.name!r},address={self.address!r},last_sequence={self.last_sequence!r},'
+            f'readings=[{self.readings[0]!r}...{self.readings[-1]!r}],'
+            f'deltas=[{self.deltas[0]!r}...{self.deltas[-1]!r}])'
+        )
 
     def n_channels(self):
         return len(self.channel_list)
@@ -109,20 +122,23 @@ class Device:
             pass
         elif self.last_sequence+1 == message.sequence:
             # Message is in sequence, everything is perfect
+            print(f'Processing message {message!r}')
             self.last_sequence = message.sequence
             self.readings.insert(0,message.readings[0])
             self.deltas.insert(0,message.deltas[0])
             self.message_count += 1
             self.not_written += 1
-            print(f'Next sequence number {self.last_sequence} received; reading {message.readings[0]} added.')
+            print(f'Updated to next sequence number {message.sequence}: {self!r}')
         elif self.last_sequence+1 > message.last_sequence:
             print(f'Did not receive sequence numbers {self.last_sequence+1}..{message.sequence}. Trying to recover from backlog.',file=sys.stderr)
             sys.stderr.flush()
+            print(f'Processing message {message!r}')
             self.last_sequence = message.sequence
             self.message_count += 1
             self.readings, n = merge(self.readings,message.readings)
             self.not_written += n
             self.deltas, _ = merge(self.deltas,message.deltas)
+            print(f'Message merged {n} new readings into device {self!r}')
         else:
             # Received sequence number is smaller, assuming device reboot
             print(f'Expecting sequence number {self.last_sequence+1} but received {message.sequence}.',file=sys.stderr)
@@ -154,21 +170,16 @@ class Devices:
 
     def process_message(self,address,json_message):
         m = Message(json_message)
-        print(f'process_message: {m!r}')
-
         if not m.device_name in self.devices:
             self.devices[m.device_name] = Device(m,address)
         # print(f'New device <{device_name}> added.')
         device = self.devices[m.device_name]
-        print(f'device to update: {device!r}')
         device.update(m)
         if device.not_written >= self.write_frequency:
             self.write_data_to_file(device)
             device.not_written = 0
         device.readings = self.prune(device.readings)
         device.deltas = self.prune(device.deltas)
-        print(f'updated device: {device!r}')
-        print('-----')
 
 # --------------------------------------------------------------------------------
 # main
