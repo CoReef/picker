@@ -3,6 +3,7 @@ import struct
 import json
 import time
 import os
+import sys
 import argparse
 
 from datetime import datetime
@@ -55,7 +56,7 @@ def disect_message(message):
         reading = (sequence-s,ts,timestamp,values)
         if reading[0]>0:
             readings.append(reading)
-    print(f'Deltas received: {message["p_delta_ms"]}')
+    # print(f'Deltas received: {message["p_delta_ms"]}')
     return device_name,sequence,poll,channel_list,readings
 
 def merge_readings(device,new_readings):
@@ -74,7 +75,7 @@ def process_message (d,address,message,data_dir,backlog_size):
     device_name,sequence,poll,channel_list,readings = disect_message(message)
     if not device_name in devices:
         devices[device_name] = new_device(device_name,address,sequence,poll,channel_list,readings)
-        print(f'New device <{device_name}> added.')
+        # print(f'New device <{device_name}> added.')
     device = devices[device_name]
     device['last_seen']=time.time()
     if device['last_seq']==sequence:
@@ -88,19 +89,20 @@ def process_message (d,address,message,data_dir,backlog_size):
         device['not_written'] += 1
         print(f'Next sequence number {sequence} received; reading {readings[0]} added.')
     elif sequence > device['last_seq']+1:
-        print(f'Did not receive sequence numbers {device["last_seq"]+1}..{sequence}. Trying to recover from backlog.')
+        print(f'Did not receive sequence numbers {device["last_seq"]+1}..{sequence}. Trying to recover from backlog.',file=sys.stderr)
+        sys.stderr.flush()
         device['last_seq'] = sequence
         device['mcount'] += 1
         merge_readings(device,readings)
     else:
         # Received sequence number is smaller, assuming device reboot
-        print(f'Expecting sequence number {device["last_seq"]+1} but received {sequence}.')
+        print(f'Expecting sequence number {device["last_seq"]+1} but received {sequence}.',file=sys.stderr)
+        sys.stderr.flush()
 
     if device['not_written'] >= write_frequency:
         write_data_to_file(data_dir,device)
         device['not_written'] = 0
 
-    print(f'{len(device["readings"])} readings for device {device["name"]}. Backlog size is {backlog_size}.')
     if len(device['readings']) > backlog_size:
         device['readings'] = device['readings'][:backlog_size-len(device['readings'])]
  
