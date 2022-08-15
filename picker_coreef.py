@@ -15,7 +15,7 @@ write_frequency = 12
 
 devices = {}
 
-def new_device (device_name,address,sequence,poll,channel_list,readings):
+def new_device (device_name,address,sequence,poll,channel_list,readings,deltas):
     initial = {
         "name":device_name,
         "address":address,
@@ -27,7 +27,8 @@ def new_device (device_name,address,sequence,poll,channel_list,readings):
         "channels":channel_list,
         "n_channels":len(channel_list),
         "readings":readings,
-        "not_written":min(sequence,len(readings))
+        "not_written":min(sequence,len(readings)),
+        "deltas":deltas
         }
     return initial
 
@@ -45,10 +46,13 @@ def disect_message(message):
     n_channels = len(channel_list)
     n_samples = len(message['channel_0'])
     readings = []
+    deltas = []
     ts = time.time()
     for s in range(n_samples):
         if s > 0:
-            ts = ts - poll - message['p_delta_ms'][s-1]/1000.0
+            delta = message['p_delta_ms'][s-1]
+            ts = ts - poll - delta/1000.0
+            deltas.append((sequence-s,delta))
         values = []
         for c in range(n_channels):
             values.append(message[f'channel_{c}'][s])
@@ -56,8 +60,8 @@ def disect_message(message):
         reading = (sequence-s,ts,timestamp,values)
         if reading[0]>0:
             readings.append(reading)
-    # print(f'Deltas received: {message["p_delta_ms"]}')
-    return device_name,sequence,poll,channel_list,readings
+    # print(f'Deltas received: {deltas}')
+    return device_name,sequence,poll,channel_list,readings,deltas
 
 def merge_readings(device,new_readings):
     result = device['readings']
@@ -72,9 +76,9 @@ def merge_readings(device,new_readings):
     device['readings'] = result
 
 def process_message (d,address,message,data_dir,backlog_size):
-    device_name,sequence,poll,channel_list,readings = disect_message(message)
+    device_name,sequence,poll,channel_list,readings,deltas = disect_message(message)
     if not device_name in devices:
-        devices[device_name] = new_device(device_name,address,sequence,poll,channel_list,readings)
+        devices[device_name] = new_device(device_name,address,sequence,poll,channel_list,readings,deltas)
         # print(f'New device <{device_name}> added.')
     device = devices[device_name]
     device['last_seen']=time.time()
@@ -98,7 +102,7 @@ def process_message (d,address,message,data_dir,backlog_size):
         # Received sequence number is smaller, assuming device reboot
         print(f'Expecting sequence number {device["last_seq"]+1} but received {sequence}.',file=sys.stderr)
         sys.stderr.flush()
-
+    
     if device['not_written'] >= write_frequency:
         write_data_to_file(data_dir,device)
         device['not_written'] = 0
@@ -106,6 +110,8 @@ def process_message (d,address,message,data_dir,backlog_size):
     if len(device['readings']) > backlog_size:
         device['readings'] = device['readings'][:backlog_size-len(device['readings'])]
  
+
+
 
 def main():
     global write_frequency
@@ -115,8 +121,11 @@ def main():
     parser.add_argument("--outdir", type=str, required=False, help="The directory to store data files",default=".")
     parser.add_argument("--backlog", type=int, required=False, help="The size of the backlog storage",default=24)
     parser.add_argument("--writefreq", type=int, required=False, help="Number of readings before writing to file",default=12)
+    parser.add_argument("--details", type=bool, required=False, help="The size of the backlog storage",default=False)
+
     args = parser.parse_args()
 
+    write_details = args.details
     backlog_size = args.backlog
     write_frequency = args.writefreq
     if backlog_size < write_frequency:
