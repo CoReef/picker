@@ -17,7 +17,7 @@ server_address = ('', 4242)
 
 class Message:
 
-    def __init__(self,message):
+    def __init__(self,message,t):
         self.device_name = message['device']
         self.sequence = message['sequence']
         self.poll = message['poll']
@@ -25,11 +25,13 @@ class Message:
         self.n_channels = len(self.channel_list)
         self.n_samples = len(message['channel_0'])
         self.readings = []
+        self.remote_timebase = message['timebase']
+        self.local_timebase = t
         self.deltas = []
-        ts = time.time()
+        ts = t
         for s in range(self.n_samples):
             if s > 0:
-                delta = message['p_delta_ms'][s-1]
+                delta = message['t_deltas'][s-1]
                 ts = ts - self.poll - delta/1000.0
                 self.deltas.append((self.sequence-s,delta))
             values = []
@@ -168,8 +170,8 @@ class Devices:
             return l[:self.backlog_size-len(l)]
         return l
 
-    def process_message(self,address,json_message):
-        m = Message(json_message)
+    def process_message(self,address,json_message,t):
+        m = Message(json_message,t)
         if not m.device_name in self.devices:
             self.devices[m.device_name] = Device(m,address)
         # print(f'New device <{device_name}> added.')
@@ -214,8 +216,9 @@ def main():
     devices = Devices(data_dir,backlog_size,write_frequency)
     while True:
         rawdata, address = sock.recvfrom(1024)
+        receiving_time = time.time()
         json_message = json.loads(rawdata)
-        devices.process_message(address,json_message)
+        devices.process_message(address,json_message,receiving_time)
 
 if __name__ == '__main__':
     main()
