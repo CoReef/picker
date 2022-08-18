@@ -131,6 +131,8 @@ class Device:
             self.message_count += 1
             self.not_written += 1
             print(f'Updated to next sequence number {message.sequence}: {self!r}')
+            sum_deltas = sum(d[1] for d in message.deltas)
+            print(f'Current average delta of poll period is {sum_deltas/len(message.deltas):.3f} ms')
         elif self.last_sequence+1 > message.last_sequence:
             print(f'Did not receive sequence numbers {self.last_sequence+1}..{message.sequence}. Trying to recover from backlog.',file=sys.stderr)
             sys.stderr.flush()
