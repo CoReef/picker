@@ -21,7 +21,7 @@ class Message:
         self.device_name = message['device']
         self.sequence = message['sequence']
         self.poll = message['poll']
-        self.free_heap = message['free_heap']
+        self.free_heap = message.get('free_heap',0)
         self.channel_list = message['channels']
         self.n_channels = len(self.channel_list)
         self.n_samples = len(message['channel_0'])
@@ -135,16 +135,16 @@ class Device:
             self.not_written += 1
             print(f'Updated to next sequence number {message.sequence}: {self!r}')
             sum_deltas = sum(d[1] for d in message.deltas)
-            print(f'Current average delta of poll period is {sum_deltas/len(message.deltas):.3f} ms')
-        elif self.last_sequence+1 > message.last_sequence:
+            print(f'Current average delta of poll period for device {self.name} is {sum_deltas/len(message.deltas):.3f} ms')
+        elif self.last_sequence+1 < message.sequence:
             print(f'Did not receive sequence numbers {self.last_sequence+1}..{message.sequence}. Trying to recover from backlog.',file=sys.stderr)
             sys.stderr.flush()
             print(f'Processing message {message!r}')
             self.last_sequence = message.sequence
             self.message_count += 1
-            self.readings, n = merge(self.readings,message.readings)
+            self.readings, n = Device.merge(self.readings,message.readings)
             self.not_written += n
-            self.deltas, _ = merge(self.deltas,message.deltas)
+            self.deltas, _ = Device.merge(self.deltas,message.deltas)
             print(f'Message merged {n} new readings into device {self!r}')
         else:
             # Received sequence number is smaller, assuming device reboot

@@ -32,9 +32,12 @@ def main():
     message = {
         "device":args.name,
         "sequence":0,
-        "sec_since_boot":int(time.time()-start),
-        "channels":[]
+        "poll":args.sleep,
+        "timebase":time.time(),
+        "channels":[],
+        "t_deltas":[ args.sleep for r in range(n_readings-1)]
     }
+
     for c in range(n_channels):
         message["channels"].append(f' Channel_{c}')
         message[f'channel_{c}'] = []
@@ -43,9 +46,10 @@ def main():
 
     while True:
         message["sequence"] += 1
-        message["sec_since_boot"] = int(time.time()-start)
+        message["timebase"] = time.time()
         for c in range(n_channels):
             message[f'channel_{c}'] = [message["sequence"]] + message[f'channel_{c}'][:-1]
+        message['t_deltas'] = [random.uniform(-args.sleep,args.sleep)] + message['t_deltas'][:-1]
 
         json_message = json.dumps(message,indent=4)
         raw_message = bytes(json_message,"UTF-8")
