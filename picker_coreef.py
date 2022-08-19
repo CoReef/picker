@@ -21,6 +21,7 @@ class Message:
         self.device_name = message['device']
         self.sequence = message['sequence']
         self.poll = message['poll']
+        self.free_heap = message['free_heap']
         self.channel_list = message['channels']
         self.n_channels = len(self.channel_list)
         self.n_samples = len(message['channel_0'])
@@ -77,6 +78,7 @@ class Device:
         self.not_written = min(message.sequence,len(message.readings))
         self.message_count = 0
         self.last_seen = time.time()
+        self.free_heap = message.free_heap
 
     def __repr__(self):
         class_name = type(self).__name__
@@ -84,7 +86,8 @@ class Device:
         return (
             f'{class_name}({self.name!r},address={self.address!r},last_sequence={self.last_sequence!r},'
             f'readings=[{self.readings[0]!r}...{self.readings[-1]!r}],'
-            f'deltas=[{self.deltas[0]!r}...{self.deltas[-1]!r}])'
+            f'deltas=[{self.deltas[0]!r}...{self.deltas[-1]!r}],'
+            f'free_heap={self.free_heap})'
         )
 
     def n_channels(self):
