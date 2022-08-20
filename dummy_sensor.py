@@ -39,7 +39,7 @@ def main():
     }
 
     for c in range(n_channels):
-        message["channels"].append(f' Channel_{c}')
+        message["channels"].append(f'Channel_{c}')
         message[f'channel_{c}'] = []
         for r in range(n_readings):
             message[f'channel_{c}'].append(-100.0)
@@ -47,10 +47,10 @@ def main():
     start_time = time.time()
     while True:
         message["sequence"] += 1
-        message["timebase"] = time.time() - start_time
+        message["timebase"] = (time.time() - start_time) * 1000.0
         for c in range(n_channels):
             message[f'channel_{c}'] = [message["sequence"]] + message[f'channel_{c}'][:-1]
-        message['t_deltas'] = [random.uniform(-args.sleep,args.sleep)] + message['t_deltas'][:-1]
+        message['t_deltas'] = [0] + message['t_deltas'][:-1]
 
         json_message = json.dumps(message,indent=4)
         raw_message = bytes(json_message,"UTF-8")
