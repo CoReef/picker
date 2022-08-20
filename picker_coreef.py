@@ -29,17 +29,14 @@ class Message:
         self.remote_timebase = message['timebase']
         self.local_timebase = t
         self.deltas = []
-        ts = t
+        ts = self.remote_timebase
         for s in range(self.n_samples):
             if s > 0:
                 delta = message['t_deltas'][s-1]
                 ts = ts - self.poll - delta/1000.0
                 self.deltas.append((self.sequence-s,delta))
-            values = []
-            for c in range(self.n_channels):
-                values.append(message[f'channel_{c}'][s])
-            timestamp = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
-            reading = (self.sequence-s,ts,timestamp,values)
+            values = tuple(message[f'channel_{c}'][s] for c in range(self.n_channels))
+            reading = (self.sequence-s,ts,values)
             if reading[0]>0:
                 self.readings.append(reading)
 
@@ -55,18 +52,6 @@ class Message:
 # Class Device
 # --------------------------------------------------------------------------------
 class Device:
-    def __init__(self,name,address,sequence,poll,channel_list,readings,deltas):
-        self.name = name
-        self.address = address
-        self.last_sequence = sequence
-        self.poll = poll
-        self.channel_list = channel_list
-        self.readings = readings
-        self.deltas = deltas
-        self.not_written = min(sequence,len(readings))
-        self.message_count = 0
-        self.last_seen = time.time()
-    
     def __init__(self,message,address):
         self.name = message.device_name
         self.address = address
@@ -79,6 +64,8 @@ class Device:
         self.message_count = 0
         self.last_seen = time.time()
         self.free_heap = message.free_heap
+        self.first_seen_r = message.remote_timebase
+        self.first_seen_l = message.local_timebase
 
     def __repr__(self):
         class_name = type(self).__name__

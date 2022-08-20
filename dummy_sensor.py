@@ -44,9 +44,10 @@ def main():
         for r in range(n_readings):
             message[f'channel_{c}'].append(-100.0)
 
+    start_time = time.time()
     while True:
         message["sequence"] += 1
-        message["timebase"] = time.time()
+        message["timebase"] = time.time() - start_time
         for c in range(n_channels):
             message[f'channel_{c}'] = [message["sequence"]] + message[f'channel_{c}'][:-1]
         message['t_deltas'] = [random.uniform(-args.sleep,args.sleep)] + message['t_deltas'][:-1]
