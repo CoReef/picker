@@ -22,7 +22,7 @@ Message = namedtuple('Message', 'header readings l_timebase r_timebase')
 
 
 def as_message(raw_message, time_received):
-    # Convert raw JSON formatted message to dictionary
+    """Convert the raw JSON formatted message received at the given time to a dictionary"""
     j = json.loads(raw_message)
     # Build the message header
     header = Header(j['device'], j['poll'], j.get('free_heap', 0), len(j['channels']), j['channels'], len(j['channel_0']),j['sequence'])
@@ -43,8 +43,11 @@ def as_message(raw_message, time_received):
 # --------------------------------------------------------------------------------
 # Class Device
 # --------------------------------------------------------------------------------
+
 class Device:
+    """Device keeps track of all state information and limited number of readings"""
     def __init__(self, message, address):
+        """Most state information for a new device is part of any message"""
         self.name = message.header.device_name
         self.address = address
         self.last_sequence = message.header.sequence_number
@@ -57,6 +60,7 @@ class Device:
         self.first_seen_l = message.l_timebase
         self.free_heap = message.header.free_heap
         self.readings = message.readings
+        print(f'Have readings for the following sequence numbers {self.key_list()}')
 
     def __repr__(self):
         class_name = type(self).__name__
@@ -69,6 +73,7 @@ class Device:
         )
 
     def to_json(self):
+        """A subset of the device state is converted to a JSON string"""
         content = {
             "name": self.name,
             "address": self.address,
@@ -80,23 +85,27 @@ class Device:
         }
         return json.dumps(content, indent=None)
 
-    @staticmethod
-    def merge(old_data, new_data):
-        result = old_data
-        new_entries = 0
-        seq_numbers = set()
-        for r in result:
-            seq_numbers.add(r[0])
-        for r in new_data:
-            if not r[0] in seq_numbers:
-                result.append(r)
-                new_entries += 1
-        result.sort(key=lambda x: x[0], reverse=True)
-        return result, new_entries
+    def merge_readings(self, new_data):
+        """Any new readings found in new_data are added to self.readings"""
+        for key in new_data.keys():
+            if not key in self.readings:
+                self.readings[key] = new_data[key]
+                self.not_written += 1
 
     def prune_readings(self, max_length):
-        if len(self.readings) > max_length:
-            pass
+        """Throw away old readings"""
+        n_drops = max_length - len(self.readings)
+        if n_drops <= 0:
+            return
+        print(f'Nedd to prune {n_drops} readings')
+        drop_candidates = self.key_list()[:-n_drops]
+        for c in drop_candidates:
+            del self.readings[c]
+
+    def key_list(self):
+        l = list(self.readings.keys())
+        l.sort(reverse=True)
+        return l
 
     def update(self, message):
         self.last_seen = time.time()
@@ -106,23 +115,22 @@ class Device:
             pass
         elif self.last_sequence + 1 == seq:
             # Message is in sequence, everything is perfect
-            print(f'Processing message {message!r}')
+            print(f'Processing message {message.header.sequence_number} from {message.header.device_name}')
             self.last_sequence = seq
             self.readings[seq] = message.readings[seq]
             self.message_count += 1
             self.not_written += 1
-            print(f'Updated to next sequence number {message.sequence}: {self!r}')
+            print(f'Updated to next sequence number {seq}')
+            print(f'Have readings for the following sequence numbers {self.key_list()}')
             sum_deltas = sum(r.r_delta for r in message.readings.values())
-            print(f'Current average delta of poll period for device {self.name} is {sum_deltas / len(message.deltas):.3f} ms')
-        elif self.last_sequence + 1 < message.sequence:
+            print(f'Current average delta of poll period for device {self.name} is {sum_deltas / len(message.readings):.3f} ms')
+        elif self.last_sequence + 1 < seq:
             print(f'Did not receive sequence numbers {self.last_sequence + 1}..{seq}. Trying to recover from backlog.',file=sys.stderr)
             sys.stderr.flush()
-            print(f'Processing message {message!r}')
             self.last_sequence = seq
-            self.message_count += 1
-            self.readings, n = Device.merge(self.readings, message.readings)
-            self.not_written += n
-            print(f'Message merged {n} new readings into device {self!r}')
+            self.merge_readings(message.readings)
+            print(f'New messages merged into new readings into device {self.name}')
+            print(f'Have readings for the following sequence numbers {self.key_list()}')
         else:
             # Received sequence number is smaller, assuming device reboot
             print(f'Expecting sequence number {self.last_sequence + 1} but received {message.sequence}.',
@@ -135,7 +143,7 @@ class Device:
 # --------------------------------------------------------------------------------
 
 class Devices:
-
+    """All the devices sending messages with the CoReef multicast address"""
     def __init__(self, directory_for_data_files, backlog_size, write_frequency):
         self.devices = {}
         self.directory_for_data_files = directory_for_data_files
@@ -152,7 +160,7 @@ class Devices:
         device_name = message.header.device_name
         if not device_name in self.devices:
             self.devices[device_name] = Device(message, address)
-        print(f'New device <{device_name}> added.')
+            print(f'New device <{device_name}> added.')
         device = self.devices[device_name]
         device.update(message)
         if device.not_written >= self.write_frequency:
