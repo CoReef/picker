@@ -95,9 +95,9 @@ class Device:
     def prune_readings(self, max_length):
         """Throw away old readings"""
         n_drops = max_length - len(self.readings)
-        if n_drops <= 0:
+        if n_drops >= 0:
             return
-        print(f'Nedd to prune {n_drops} readings')
+        print(f'Need to prune {n_drops} readings')
         drop_candidates = self.key_list()[:-n_drops]
         for c in drop_candidates:
             del self.readings[c]
