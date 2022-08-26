@@ -46,10 +46,11 @@ def as_message(raw_message, time_received):
 
 class Device:
     """Device keeps track of all state information and limited number of readings"""
-    def __init__(self, message, address):
+    def __init__(self, message, address, max_readings):
         """Most state information for a new device is part of any message"""
         self.name = message.header.device_name
         self.address = address
+        self.max_readings = max_readings
         self.last_sequence = message.header.sequence_number
         self.poll_frequency = message.header.poll_frequency
         self.channel_list = message.header.channel_list
@@ -60,7 +61,7 @@ class Device:
         self.first_seen_l = message.l_timebase
         self.free_heap = message.header.free_heap
         self.readings = message.readings
-        print(f'Have readings for the following sequence numbers {self.key_list()}')
+        print(f'Have readings for the following sequence numbers {self.readings.keys()}')
 
     def __repr__(self):
         class_name = type(self).__name__
@@ -98,22 +99,8 @@ class Device:
                 self.readings[key] = new_data[key]
                 self.not_written += 1
 
-    def prune_readings(self, max_length):
-        """Throw away old readings"""
-        n_drops = max_length - len(self.readings)
-        if n_drops >= 0:
-            return
-        print(f'Need to prune {n_drops} readings')
-        drop_candidates = self.key_list()[:-n_drops]
-        for c in drop_candidates:
-            del self.readings[c]
-
-    def key_list(self):
-        l = list(self.readings.keys())
-        l.sort(reverse=True)
-        return l
-
     def update(self, message):
+        """Check whether new message is duplicate, in sequence, out of sequence or from the past"""
         self.last_seen = time.time()
         seq = message.header.sequence_number
         if self.last_sequence == seq:
@@ -127,7 +114,7 @@ class Device:
             self.message_count += 1
             self.not_written += 1
             print(f'Updated to next sequence number {seq}')
-            print(f'Have readings for the following sequence numbers {self.key_list()}')
+            print(f'Have readings for the following sequence numbers {self.readings.keys()}')
             sum_deltas = sum(r.r_delta for r in message.readings.values())
             print(f'Current average delta of poll period for device {self.name} is {sum_deltas / len(message.readings):.3f} ms')
         elif self.last_sequence + 1 < seq:
@@ -135,6 +122,7 @@ class Device:
             sys.stderr.flush()
             self.last_sequence = seq
             self.merge_readings(message.readings)
+            self.message_count += 1
             print(f'New messages merged into new readings into device {self.name}')
             print(f'Have readings for the following sequence numbers {self.key_list()}')
         else:
@@ -142,6 +130,21 @@ class Device:
             print(f'Expecting sequence number {self.last_sequence + 1} but received {message.sequence}.',
                   file=sys.stderr)
             sys.stderr.flush()
+        self.prune_readings()
+
+    def prune_readings ( self ):
+        n_drops = self.max_readings - len(self.readings)
+        if n_drops >= 0:
+            return
+        print(f'Need to prune {-n_drops} readings')
+        all_keys = list(self.readings.keys())
+        all_keys.sort(reverse=True)
+        drop_candidates = all_keys[n_drops:]
+        print(f'Candidates to drop are {drop_candidates}')
+        for c in drop_candidates:
+            del self.readings[c]
+
+        
 
 
 # --------------------------------------------------------------------------------
@@ -165,14 +168,13 @@ class Devices:
     def process_message(self, address, message):
         device_name = message.header.device_name
         if not device_name in self.devices:
-            self.devices[device_name] = Device(message, address)
+            self.devices[device_name] = Device(message, address, self.backlog_size)
             print(f'New device <{device_name}> added.')
         device = self.devices[device_name]
         device.update(message)
         if device.not_written >= self.write_frequency:
             self.write_data_to_file(device)
             device.not_written = 0
-        device.prune_readings(self.backlog_size)
 
 
 # --------------------------------------------------------------------------------
