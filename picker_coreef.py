@@ -12,6 +12,10 @@ from collections import namedtuple
 multicast_group = '239.255.0.42'
 server_address = ('', 4242)
 
+import paho.mqtt.client as mqtt
+mqtt_address = '10.42.1.102'
+mqtt_port = 1884
+
 # --------------------------------------------------------------------------------
 # Message
 # --------------------------------------------------------------------------------
@@ -91,6 +95,13 @@ class Device:
         pretty_r.sort(key=lambda x : x[0],reverse=True)
         content["readings"] = pretty_r
         return json.dumps(content, indent=2)
+    
+    def last_reading(self):
+        content = { "timestamp" : datetime.fromtimestamp(self.last_seen).strftime("%Y.%m.%d %H:%M:%S") }
+        for i, channel_name in enumerate(self.channel_list):
+            content[channel_name] = self.readings[self.last_sequence].values[i]
+        return json.dumps(content, indent=None)
+        
 
     def merge_readings(self, new_data):
         """Any new readings found in new_data are added to self.readings"""
@@ -127,8 +138,7 @@ class Device:
             print(f'Have readings for the following sequence numbers {self.key_list()}')
         else:
             # Received sequence number is smaller, assuming device reboot
-            print(f'Expecting sequence number {self.last_sequence + 1} but received {message.sequence}.',
-                  file=sys.stderr)
+            print(f'Expecting sequence number {self.last_sequence + 1} but received {message.sequence}.',file=sys.stderr)
             sys.stderr.flush()
         self.prune_readings()
 
@@ -153,11 +163,12 @@ class Device:
 
 class Devices:
     """All the devices sending messages with the CoReef multicast address"""
-    def __init__(self, directory_for_data_files, backlog_size, write_frequency):
+    def __init__(self, directory_for_data_files, backlog_size, write_frequency, mqtt_client):
         self.devices = {}
         self.directory_for_data_files = directory_for_data_files
         self.backlog_size = backlog_size
         self.write_frequency = write_frequency
+        self.mqtt_client = mqtt_client
 
     def write_data_to_file(self, device):
         dt = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -172,10 +183,23 @@ class Devices:
             print(f'New device <{device_name}> added.')
         device = self.devices[device_name]
         device.update(message)
+        mqtt_message = device.last_reading()
+        mqtt_tag = f'{device.name}/reading'
+        print(f'Sending <{mqtt_message}> with tag <{mqtt_tag} to MQTT-Server {self.mqtt_client}')
+        self.mqtt_client.publish(mqtt_tag,mqtt_message)
         if device.not_written >= self.write_frequency:
             self.write_data_to_file(device)
             device.not_written = 0
 
+# --------------------------------------------------------------------------------
+# MQTT
+# --------------------------------------------------------------------------------
+
+def on_connect(client, userdata, flags, rc):
+    client.subscribe('#')
+
+def on_message(client, userdata, message):
+    print(f'Received <{str(message.payload)}> from MQTT server')
 
 # --------------------------------------------------------------------------------
 # main
@@ -208,7 +232,13 @@ def main():
     mreq = struct.pack('4sL', group, socket.INADDR_ANY)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
-    devices = Devices(data_dir, backlog_size, write_frequency)
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(mqtt_address,mqtt_port,60)
+    client.loop_start()
+
+    devices = Devices(data_dir, backlog_size, write_frequency, client)
     while True:
         rawdata, address = sock.recvfrom(1024)
         receiving_time = time.time()
