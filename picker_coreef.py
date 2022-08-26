@@ -80,10 +80,16 @@ class Device:
             "poll": self.poll_frequency,
             "last_seen": self.last_seen,
             "message_count": self.message_count,
-            "channel_list": self.channel_list,
-            "readings": self.readings
+            "channel_list": self.channel_list
         }
-        return json.dumps(content, indent=None)
+        pretty_r = []
+        for r in self.readings.values():
+            ts = self.first_seen_l + (r.r_timebase + r.r_delta - self.first_seen_r)/1000.0
+            dt = datetime.fromtimestamp(ts).strftime("%Y.%m.%d %H:%M:%S")
+            pretty_r.append((r.sequence,dt,r.r_timebase,r.r_delta,r.values))
+        pretty_r.sort(key=lambda x : x[0],reverse=True)
+        content["readings"] = pretty_r
+        return json.dumps(content, indent=2)
 
     def merge_readings(self, new_data):
         """Any new readings found in new_data are added to self.readings"""
