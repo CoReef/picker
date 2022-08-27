@@ -44,17 +44,25 @@ def as_message(raw_message, time_received):
     m = Message(header,readings,time_received,j['timebase'])
     return m
 
+def epoch_to_string(e):
+    return datetime.fromtimestamp(e).strftime("%Y.%m.%d %H:%M:%S")
+
 # --------------------------------------------------------------------------------
 # Class Device
 # --------------------------------------------------------------------------------
 
 class Device:
     """Device keeps track of all state information and limited number of readings"""
+
     def __init__(self, message, address, max_readings):
         """Most state information for a new device is part of any message"""
+        self.max_readings = max_readings
+        self.init_with_message(message,address)
+        print(f'Have readings for the following sequence numbers {self.readings.keys()}')
+
+    def init_with_message(self,message,address):
         self.name = message.header.device_name
         self.address = address
-        self.max_readings = max_readings
         self.last_sequence = message.header.sequence_number
         self.poll_frequency = message.header.poll_frequency
         self.channel_list = message.header.channel_list
@@ -65,7 +73,19 @@ class Device:
         self.first_seen_l = message.l_timebase
         self.free_heap = message.header.free_heap
         self.readings = message.readings
-        print(f'Have readings for the following sequence numbers {self.readings.keys()}')
+
+    def vitals(self):
+        """Create a dictionary of all relevant device vitals"""
+        v = {
+            "Address" : self.address,
+            "Last Sequence" : self.last_sequence,
+            "Last Seen Epoch" : self.last_seen,
+            "Last Seen" : epoch_to_string(self.last_seen),
+            "Not Written" : self.not_written,
+            "Message Count" : self.message_count,
+            "Free Heap" : self.free_heap
+        }
+        return v
 
     def __repr__(self):
         class_name = type(self).__name__
@@ -90,17 +110,22 @@ class Device:
         pretty_r = []
         for r in self.readings.values():
             ts = self.first_seen_l + (r.r_timebase + r.r_delta - self.first_seen_r)/1000.0
-            dt = datetime.fromtimestamp(ts).strftime("%Y.%m.%d %H:%M:%S")
+            dt = epoch_to_string(ts)
             pretty_r.append((r.sequence,dt,r.r_timebase,r.r_delta,r.values))
         pretty_r.sort(key=lambda x : x[0],reverse=True)
         content["readings"] = pretty_r
         return json.dumps(content, indent=2)
     
-    def last_reading(self):
-        content = { "timestamp" : datetime.fromtimestamp(self.last_seen).strftime("%Y.%m.%d %H:%M:%S") }
+    def mqtt_publish(self, mqtt_client):
+        """Create JSON string for last reading and publish it to MQTT server"""
+        content = { "Timestamp" : datetime.fromtimestamp(self.last_seen).strftime("%Y.%m.%d %H:%M:%S") }
         for i, channel_name in enumerate(self.channel_list):
             content[channel_name] = self.readings[self.last_sequence].values[i]
-        return json.dumps(content, indent=None)
+        content["Sequence"] = self.last_sequence
+        mqtt_message = json.dumps(content, indent=None)
+        mqtt_tag = f'{self.name}/reading'
+        print(f'Sending <{mqtt_message}> with tag <{mqtt_tag} to MQTT-Server {mqtt_client}')
+        mqtt_client.publish(mqtt_tag,mqtt_message)
         
 
     def merge_readings(self, new_data):
@@ -110,7 +135,7 @@ class Device:
                 self.readings[key] = new_data[key]
                 self.not_written += 1
 
-    def update(self, message):
+    def update(self, message, address):
         """Check whether new message is duplicate, in sequence, out of sequence or from the past"""
         self.last_seen = time.time()
         seq = message.header.sequence_number
@@ -138,11 +163,13 @@ class Device:
             print(f'Have readings for the following sequence numbers {self.key_list()}')
         else:
             # Received sequence number is smaller, assuming device reboot
-            print(f'Expecting sequence number {self.last_sequence + 1} but received {message.sequence}.',file=sys.stderr)
+            print(f'Expecting sequence number {self.last_sequence + 1} but received {message.header.sequence_number}.',file=sys.stderr)
             sys.stderr.flush()
+            self.init_with_message(message,address)
         self.prune_readings()
 
     def prune_readings ( self ):
+        """Ensure that at most self.max_readings number of readings are stored"""
         n_drops = self.max_readings - len(self.readings)
         if n_drops >= 0:
             return
@@ -165,12 +192,22 @@ class Devices:
     """All the devices sending messages with the CoReef multicast address"""
     def __init__(self, directory_for_data_files, backlog_size, write_frequency, mqtt_client):
         self.devices = {}
+        self.configure(directory_for_data_files,backlog_size,write_frequency,mqtt_client)
+
+    def __init__(self):
+        """A default constructor becasue a global variable of this class is needed"""
+        self.devices = {}
+
+    def configure(self, directory_for_data_files, backlog_size, write_frequency, mqtt_client):
+        """Configuration parameter are delivered later - Surely, Python has a better way to solve this problem?"""
         self.directory_for_data_files = directory_for_data_files
         self.backlog_size = backlog_size
         self.write_frequency = write_frequency
         self.mqtt_client = mqtt_client
 
+
     def write_data_to_file(self, device):
+        """Write all the collected state of a device to file for house keeping"""
         dt = datetime.now().strftime("%Y-%m-%d_%H%M%S")
         p = os.path.join(self.directory_for_data_files, f"{dt}_{device.name}_data.json")
         with open(p, 'w') as fd:
@@ -182,35 +219,56 @@ class Devices:
             self.devices[device_name] = Device(message, address, self.backlog_size)
             print(f'New device <{device_name}> added.')
         device = self.devices[device_name]
-        device.update(message)
-        mqtt_message = device.last_reading()
-        mqtt_tag = f'{device.name}/reading'
-        print(f'Sending <{mqtt_message}> with tag <{mqtt_tag} to MQTT-Server {self.mqtt_client}')
-        self.mqtt_client.publish(mqtt_tag,mqtt_message)
+        device.update(message,address)
+        device.mqtt_publish(self.mqtt_client)
         if device.not_written >= self.write_frequency:
             self.write_data_to_file(device)
             device.not_written = 0
+
+    def send_briefing(self):
+        content = {
+            "Device Count" : len(self.devices),
+            "Directory" : self.directory_for_data_files,
+            "Backlog Size": self.backlog_size,
+            "Write Frequency": self.write_frequency
+        }
+        for d in self.devices.values():
+            d.mqtt_publish(self.mqtt_client)
+            d_vitals = d.vitals()
+            content[d.name] = d_vitals
+        mqtt_message = json.dumps(content, indent=None)
+        mqtt_tag = f'picker/briefing'
+        print(f'Sending <{mqtt_message}> with tag <{mqtt_tag} to MQTT-Server {self.mqtt_client}')
+        self.mqtt_client.publish(mqtt_tag,mqtt_message)
+
+devices = Devices()
 
 # --------------------------------------------------------------------------------
 # MQTT
 # --------------------------------------------------------------------------------
 
 def on_connect(client, userdata, flags, rc):
-    client.subscribe('#')
+    client.subscribe('briefing')
 
 def on_message(client, userdata, message):
-    print(f'Received <{str(message.payload)}> from MQTT server')
+    global devices
+    m_raw = message.payload.decode("utf-8")
+    m = json.loads(m_raw)
+    print(f'Received <{m}> from MQTT server')
+    scope_all = m.get('Scope',False)
+    if scope_all:
+        devices.send_briefing()
 
 # --------------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------------
 
 def main():
+    global devices
     parser = argparse.ArgumentParser()
     parser.add_argument("--outdir", type=str, required=False, help="The directory to store data files", default=".")
     parser.add_argument("--backlog", type=int, required=False, help="The size of the backlog storage", default=24)
-    parser.add_argument("--writefreq", type=int, required=False, help="Number of readings before writing to file",
-                        default=12)
+    parser.add_argument("--writefreq", type=int, required=False, help="Number of readings before writing to file", default=12)
     parser.add_argument("--details", type=bool, required=False, help="The size of the backlog storage", default=False)
 
     args = parser.parse_args()
@@ -238,7 +296,7 @@ def main():
     client.connect(mqtt_address,mqtt_port,60)
     client.loop_start()
 
-    devices = Devices(data_dir, backlog_size, write_frequency, client)
+    devices.configure(data_dir, backlog_size, write_frequency, client)
     while True:
         rawdata, address = sock.recvfrom(1024)
         receiving_time = time.time()
